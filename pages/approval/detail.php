@@ -2,6 +2,7 @@
 
 require_once __DIR__ . '/../../helpers/auth.php';
 requireLogin();
+requireRole(['admin', 'approver']);
 
 require_once __DIR__ . '/../../config/database.php';
 require_once __DIR__ . '/../../helpers/crf.php';
@@ -12,81 +13,40 @@ if (!$id || !is_numeric($id)) {
     die('ID CRF tidak valid.');
 }
 
-$userId = $_SESSION['user_id'];
-$role = $_SESSION['user_role'];
-
 /*
 |--------------------------------------------------------------------------
-| Ambil data CRF sesuai role
-|--------------------------------------------------------------------------
-| Requester hanya dapat melihat CRF miliknya sendiri.
-| Admin dan approver dapat melihat semua CRF.
+| Ambil data CRF
 |--------------------------------------------------------------------------
 */
 
-if ($role === 'requester') {
-    $sql = "
-        SELECT
-            cr.id,
-            cr.request_number,
-            cr.submission_date,
-            cr.change_type,
-            cr.category,
-            cr.priority,
-            cr.title,
-            cr.current_condition,
-            cr.requested_change,
-            cr.reason,
-            cr.status,
-            cr.created_at,
-            u.name AS requester,
-            u.email,
-            d.name AS divisi
-        FROM change_requests cr
-        JOIN users u ON cr.user_id = u.id
-        LEFT JOIN divisi d ON cr.divisi_id = d.id
-        WHERE cr.id = :id
-          AND cr.user_id = :user_id
-        LIMIT 1
-    ";
+$sql = "
+    SELECT
+        cr.id,
+        cr.request_number,
+        cr.submission_date,
+        cr.change_type,
+        cr.category,
+        cr.priority,
+        cr.title,
+        cr.current_condition,
+        cr.requested_change,
+        cr.reason,
+        cr.status,
+        cr.created_at,
+        u.name AS requester,
+        u.email,
+        d.name AS divisi
+    FROM change_requests cr
+    JOIN users u ON cr.user_id = u.id
+    LEFT JOIN divisi d ON cr.divisi_id = d.id
+    WHERE cr.id = :id
+    LIMIT 1
+";
 
-    $stmt = $pdo->prepare($sql);
-
-    $stmt->execute([
-        ':id' => $id,
-        ':user_id' => $userId
-    ]);
-} else {
-    $sql = "
-        SELECT
-            cr.id,
-            cr.request_number,
-            cr.submission_date,
-            cr.change_type,
-            cr.category,
-            cr.priority,
-            cr.title,
-            cr.current_condition,
-            cr.requested_change,
-            cr.reason,
-            cr.status,
-            cr.created_at,
-            u.name AS requester,
-            u.email,
-            d.name AS divisi
-        FROM change_requests cr
-        JOIN users u ON cr.user_id = u.id
-        LEFT JOIN divisi d ON cr.divisi_id = d.id
-        WHERE cr.id = :id
-        LIMIT 1
-    ";
-
-    $stmt = $pdo->prepare($sql);
-
-    $stmt->execute([
-        ':id' => $id
-    ]);
-}
+$stmt = $pdo->prepare($sql);
+$stmt->execute([
+    ':id' => $id
+]);
 
 $crf = $stmt->fetch();
 
@@ -114,7 +74,6 @@ $sqlAttachments = "
 ";
 
 $stmtAttachments = $pdo->prepare($sqlAttachments);
-
 $stmtAttachments->execute([
     ':change_request_id' => $crf['id']
 ]);
@@ -141,7 +100,6 @@ $sqlActivities = "
 ";
 
 $stmtActivities = $pdo->prepare($sqlActivities);
-
 $stmtActivities->execute([
     ':change_request_id' => $crf['id']
 ]);
@@ -149,7 +107,7 @@ $stmtActivities->execute([
 $activities = $stmtActivities->fetchAll();
 
 $pageTitle = $crf['request_number'];
-$activeMenu = 'crf';
+$activeMenu = 'approval';
 
 require_once __DIR__ . '/../../includes/header.php';
 require_once __DIR__ . '/../../includes/sidebar.php';
@@ -159,7 +117,7 @@ require_once __DIR__ . '/../../includes/sidebar.php';
 
     <p>
         <a href="index.php" class="text-decoration-none">
-            &larr; Kembali ke Daftar CRF
+            &larr; Kembali ke Approval
         </a>
     </p>
 
@@ -188,47 +146,31 @@ require_once __DIR__ . '/../../includes/sidebar.php';
 
                 <div class="col-md-6 mb-2">
                     <div class="text-muted small">Requester</div>
-
-                    <div>
-                        <?= htmlspecialchars($crf['requester']) ?>
-                    </div>
+                    <div><?= htmlspecialchars($crf['requester']) ?></div>
                 </div>
 
                 <div class="col-md-6 mb-2">
                     <div class="text-muted small">Divisi</div>
-
-                    <div>
-                        <?= htmlspecialchars($crf['divisi'] ?? '-') ?>
-                    </div>
+                    <div><?= htmlspecialchars($crf['divisi'] ?? '-') ?></div>
                 </div>
 
                 <div class="col-md-6 mb-2">
                     <div class="text-muted small">Email</div>
-
-                    <div>
-                        <?= htmlspecialchars($crf['email']) ?>
-                    </div>
+                    <div><?= htmlspecialchars($crf['email']) ?></div>
                 </div>
 
                 <div class="col-md-6 mb-2">
                     <div class="text-muted small">Tipe Perubahan</div>
-
-                    <div>
-                        <?= htmlspecialchars($crf['change_type']) ?>
-                    </div>
+                    <div><?= htmlspecialchars($crf['change_type']) ?></div>
                 </div>
 
                 <div class="col-md-6 mb-2">
                     <div class="text-muted small">Kategori</div>
-
-                    <div>
-                        <?= htmlspecialchars($crf['category']) ?>
-                    </div>
+                    <div><?= htmlspecialchars($crf['category']) ?></div>
                 </div>
 
                 <div class="col-md-6 mb-2">
                     <div class="text-muted small">Prioritas</div>
-
                     <div>
                         <span class="badge <?= priorityBadgeClass($crf['priority']) ?>">
                             <?= htmlspecialchars(ucfirst($crf['priority'])) ?>
@@ -238,14 +180,10 @@ require_once __DIR__ . '/../../includes/sidebar.php';
 
                 <div class="col-md-6 mb-2">
                     <div class="text-muted small">Tanggal Pengajuan</div>
-
                     <div>
                         <?= $crf['submission_date']
                             ? htmlspecialchars(
-                                date(
-                                    'd M Y H:i',
-                                    strtotime($crf['submission_date'])
-                                )
+                                date('d M Y H:i', strtotime($crf['submission_date']))
                             )
                             : '-'
                         ?>
@@ -254,10 +192,7 @@ require_once __DIR__ . '/../../includes/sidebar.php';
 
                 <div class="col-md-12 mb-2">
                     <div class="text-muted small">Judul</div>
-
-                    <div>
-                        <?= htmlspecialchars($crf['title']) ?>
-                    </div>
+                    <div><?= htmlspecialchars($crf['title']) ?></div>
                 </div>
 
             </div>
@@ -287,7 +222,7 @@ require_once __DIR__ . '/../../includes/sidebar.php';
                 <?= nl2br(htmlspecialchars($crf['requested_change'])) ?>
             </p>
 
-            <h6 class="mb-1">Alasan / Tujuan</h6>
+            <h6>Alasan / Tujuan</h6>
 
             <p class="mb-0">
                 <?= nl2br(htmlspecialchars($crf['reason'])) ?>
@@ -333,9 +268,7 @@ require_once __DIR__ . '/../../includes/sidebar.php';
                                     </td>
 
                                     <td>
-                                        <?= htmlspecialchars(
-                                            strtoupper($attachment['file_type'])
-                                        ) ?>
+                                        <?= htmlspecialchars(strtoupper($attachment['file_type'])) ?>
                                     </td>
 
                                     <td>
@@ -355,43 +288,14 @@ require_once __DIR__ . '/../../includes/sidebar.php';
                                     </td>
 
                                     <td>
-                                        <div class="d-flex gap-1">
-
-                                            <a
-                                                href="../../<?= htmlspecialchars($attachment['file_path']) ?>"
-                                                target="_blank"
-                                                class="btn btn-sm btn-outline-primary"
-                                            >
-                                                <i class="bi bi-eye"></i>
-                                                Lihat
-                                            </a>
-
-                                            <?php if ($role === 'requester' && $crf['status'] === 'draft'): ?>
-
-                                                <form
-                                                    method="POST"
-                                                    action="delete_attachment.php"
-                                                    class="d-inline"
-                                                    onsubmit="return confirm('Yakin ingin menghapus lampiran ini?');"
-                                                >
-                                                    <input
-                                                        type="hidden"
-                                                        name="attachment_id"
-                                                        value="<?= $attachment['id'] ?>"
-                                                    >
-
-                                                    <button
-                                                        type="submit"
-                                                        class="btn btn-sm btn-outline-danger"
-                                                    >
-                                                        <i class="bi bi-trash"></i>
-                                                        Hapus
-                                                    </button>
-                                                </form>
-
-                                            <?php endif; ?>
-
-                                        </div>
+                                        <a
+                                            href="../../<?= htmlspecialchars($attachment['file_path']) ?>"
+                                            target="_blank"
+                                            class="btn btn-sm btn-outline-primary"
+                                        >
+                                            <i class="bi bi-eye"></i>
+                                            Lihat
+                                        </a>
                                     </td>
 
                                 </tr>
@@ -476,73 +380,114 @@ require_once __DIR__ . '/../../includes/sidebar.php';
 
     </div>
 
-</main>
+    <!-- Approval -->
+    <?php if ($crf['status'] === 'submitted'): ?>
 
-<?php require_once __DIR__ . '/../../includes/footer.php'; ?>
+        <div class="card mb-3">
 
-<!-- Progress -->
-<?php if (in_array($crf['status'], ['approved', 'in_progress', 'completed'])): ?>
+            <div class="card-header bg-white">
+                <strong>Persetujuan CRF</strong>
+            </div>
 
-    <div class="card mb-3">
+            <div class="card-body">
 
-        <div class="card-header bg-white">
-            <strong>Progress CRF</strong>
+                <form method="POST" action="process.php">
+
+                    <input
+                        type="hidden"
+                        name="change_request_id"
+                        value="<?= $crf['id'] ?>"
+                    >
+
+                    <div class="mb-3">
+
+                        <label for="comment" class="form-label">
+                            Komentar
+                        </label>
+
+                        <textarea
+                            name="comment"
+                            id="comment"
+                            class="form-control"
+                            rows="4"
+                            placeholder="Berikan komentar atau catatan approval..."
+                        ></textarea>
+
+                    </div>
+
+                    <div class="d-flex gap-2">
+
+                        <button
+                            type="submit"
+                            name="action"
+                            value="approve"
+                            class="btn btn-success"
+                        >
+                            <i class="bi bi-check-circle"></i>
+                            Approve
+                        </button>
+
+                        <button
+                            type="submit"
+                            name="action"
+                            value="reject"
+                            class="btn btn-danger"
+                        >
+                            <i class="bi bi-x-circle"></i>
+                            Reject
+                        </button>
+
+                    </div>
+
+                </form>
+
+            </div>
+
         </div>
 
-        <div class="card-body">
+    <?php endif; ?>
 
-            <?php if ($crf['status'] === 'approved'): ?>
+    <!-- Progress -->
+    <?php if ($crf['status'] === 'approved'): ?>
+
+        <div class="card mb-3">
+
+            <div class="card-header bg-white">
+                <strong>Progress CRF</strong>
+            </div>
+
+            <div class="card-body">
 
                 <p class="text-muted">
                     CRF telah disetujui dan siap diproses.
                 </p>
 
-                <?php if (in_array($role, ['admin', 'approver'])): ?>
+                <form method="POST" action="progress.php">
 
-                    <form method="POST" action="../approval/progress.php">
+                    <input
+                        type="hidden"
+                        name="change_request_id"
+                        value="<?= $crf['id'] ?>"
+                    >
 
-                        <input
-                            type="hidden"
-                            name="change_request_id"
-                            value="<?= $crf['id'] ?>"
-                        >
+                    <button
+                        type="submit"
+                        name="action"
+                        value="start"
+                        class="btn btn-primary"
+                    >
+                        <i class="bi bi-play-circle"></i>
+                        Mulai Proses
+                    </button>
 
-                        <button
-                            type="submit"
-                            name="action"
-                            value="start"
-                            class="btn btn-primary"
-                        >
-                            <i class="bi bi-play-circle"></i>
-                            Mulai Proses
-                        </button>
+                </form>
 
-                    </form>
-
-                <?php else: ?>
-
-                    <p class="mb-0">
-                        Menunggu proses lebih lanjut.
-                    </p>
-
-                <?php endif; ?>
-
-            <?php elseif ($crf['status'] === 'in_progress'): ?>
-
-                <p class="mb-0">
-                    CRF sedang dalam proses pengerjaan.
-                </p>
-
-            <?php elseif ($crf['status'] === 'completed'): ?>
-
-                <p class="mb-0 text-success">
-                    CRF telah selesai dikerjakan.
-                </p>
-
-            <?php endif; ?>
+            </div>
 
         </div>
 
-    </div>
+    <?php endif; ?>
 
-<?php endif; ?>
+</main>
+
+<?php require_once __DIR__ . '/../../includes/footer.php'; ?>

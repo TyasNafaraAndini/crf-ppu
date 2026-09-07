@@ -31,6 +31,18 @@ $activeMenu = $activeMenu ?? '';
                 </a>
             </li>
 
+            <?php if (in_array($_SESSION['user_role'], ['admin', 'approver'])): ?>
+
+                <a
+                    href="/crf-ppu/pages/approval/index.php"
+                    class="nav-link <?= $activeMenu === 'approval' ? 'active' : '' ?>"
+                >
+                    <i class="bi bi-check2-square"></i>
+                    Approval
+                </a>
+
+            <?php endif; ?>
+
             <!--
                 Menu "Approval", "Users", dan "Divisi" akan kita tambahkan
                 di sini setelah halaman-halaman tersebut dibuat pada

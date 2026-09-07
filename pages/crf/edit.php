@@ -80,144 +80,340 @@ $categories = [
     'Other'
 ];
 
+/*
+|--------------------------------------------------------------------------
+| Konfigurasi attachment
+|--------------------------------------------------------------------------
+*/
+
+$allowedExtensions = [
+    'pdf',
+    'doc',
+    'docx',
+    'xls',
+    'xlsx',
+    'jpg',
+    'png'
+];
+
+$maxFileSize = 5 * 1024 * 1024;
+
 $errors = [];
+$success = '';
 
 /*
 |--------------------------------------------------------------------------
-| Proses update
+| Proses form
 |--------------------------------------------------------------------------
 */
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
-    $changeType = trim($_POST['change_type'] ?? '');
-    $category = trim($_POST['category'] ?? '');
-    $priority = trim($_POST['priority'] ?? '');
-    $title = trim($_POST['title'] ?? '');
-    $currentCondition = trim($_POST['current_condition'] ?? '');
-    $requestedChange = trim($_POST['requested_change'] ?? '');
-    $reason = trim($_POST['reason'] ?? '');
+    $action = $_POST['action'] ?? 'update';
 
     /*
     |--------------------------------------------------------------------------
-    | Validasi
+    | Upload attachment
     |--------------------------------------------------------------------------
     */
 
-    if (!in_array($changeType, $changeTypes, true)) {
-        $errors[] = 'Tipe perubahan tidak valid.';
-    }
+    if ($action === 'upload_attachment') {
 
-    if (!in_array($category, $categories, true)) {
-        $errors[] = 'Kategori tidak valid.';
-    }
+        if (
+            !isset($_FILES['attachments']) ||
+            !is_array($_FILES['attachments']['name'])
+        ) {
+            $errors[] = 'Tidak ada file yang dipilih.';
+        } else {
 
-    if (!in_array($priority, ['high', 'standard', 'low'], true)) {
-        $errors[] = 'Prioritas tidak valid.';
-    }
+            try {
 
-    if ($title === '') {
-        $errors[] = 'Judul perubahan wajib diisi.';
-    }
+                $pdo->beginTransaction();
 
-    if ($currentCondition === '') {
-        $errors[] = 'Kondisi saat ini wajib diisi.';
-    }
+                $uploadDirectory = __DIR__ . '/../../uploads/crf';
 
-    if ($requestedChange === '') {
-        $errors[] = 'Perubahan yang diminta wajib diisi.';
-    }
+                if (!is_dir($uploadDirectory)) {
+                    mkdir($uploadDirectory, 0755, true);
+                }
 
-    if ($reason === '') {
-        $errors[] = 'Alasan / tujuan wajib diisi.';
-    }
+                foreach ($_FILES['attachments']['name'] as $index => $fileName) {
 
-    /*
-    |--------------------------------------------------------------------------
-    | Simpan perubahan
-    |--------------------------------------------------------------------------
-    */
+                    $fileError = $_FILES['attachments']['error'][$index] ?? UPLOAD_ERR_NO_FILE;
 
-    if (empty($errors)) {
+                    if ($fileError === UPLOAD_ERR_NO_FILE) {
+                        continue;
+                    }
 
-        try {
+                    if ($fileError !== UPLOAD_ERR_OK) {
+                        throw new RuntimeException(
+                            "Gagal mengupload file {$fileName}."
+                        );
+                    }
 
-            $pdo->beginTransaction();
+                    $tmpName = $_FILES['attachments']['tmp_name'][$index];
+                    $fileSize = $_FILES['attachments']['size'][$index];
+                    $extension = strtolower(
+                        pathinfo($fileName, PATHINFO_EXTENSION)
+                    );
 
-            $sqlUpdate = "
-                UPDATE change_requests
-                SET
-                    change_type = :change_type,
-                    category = :category,
-                    priority = :priority,
-                    title = :title,
-                    current_condition = :current_condition,
-                    requested_change = :requested_change,
-                    reason = :reason
-                WHERE id = :id
-                  AND user_id = :user_id
-                  AND status = 'draft'
-            ";
+                    if (!in_array($extension, $allowedExtensions, true)) {
+                        throw new RuntimeException(
+                            "Format file {$fileName} tidak diperbolehkan."
+                        );
+                    }
 
-            $stmtUpdate = $pdo->prepare($sqlUpdate);
+                    if ($fileSize > $maxFileSize) {
+                        throw new RuntimeException(
+                            "Ukuran file {$fileName} melebihi 5 MB."
+                        );
+                    }
 
-            $stmtUpdate->execute([
-                ':change_type' => $changeType,
-                ':category' => $category,
-                ':priority' => $priority,
-                ':title' => $title,
-                ':current_condition' => $currentCondition,
-                ':requested_change' => $requestedChange,
-                ':reason' => $reason,
-                ':id' => $id,
-                ':user_id' => $userId
-            ]);
+                    $safeFileName = uniqid('crf_', true) . '.' . $extension;
+                    $targetPath = $uploadDirectory . '/' . $safeFileName;
 
-            /*
-            |--------------------------------------------------------------------------
-            | Simpan activity log
-            |--------------------------------------------------------------------------
-            */
+                    if (!move_uploaded_file($tmpName, $targetPath)) {
+                        throw new RuntimeException(
+                            "Gagal menyimpan file {$fileName}."
+                        );
+                    }
 
-            $sqlLog = "
-                INSERT INTO activity_logs (
-                    change_request_id,
-                    user_id,
-                    action,
-                    description
-                )
-                VALUES (
-                    :change_request_id,
-                    :user_id,
-                    :action,
-                    :description
-                )
-            ";
+                    $relativePath = 'uploads/crf/' . $safeFileName;
 
-            $stmtLog = $pdo->prepare($sqlLog);
+                    $sqlAttachment = "
+                        INSERT INTO attachments (
+                            change_request_id,
+                            file_name,
+                            file_path,
+                            file_size,
+                            file_type,
+                            uploaded_by
+                        )
+                        VALUES (
+                            :change_request_id,
+                            :file_name,
+                            :file_path,
+                            :file_size,
+                            :file_type,
+                            :uploaded_by
+                        )
+                    ";
 
-            $stmtLog->execute([
-                ':change_request_id' => $id,
-                ':user_id' => $userId,
-                ':action' => 'updated',
-                ':description' => 'CRF draft diperbarui oleh requester.'
-            ]);
+                    $stmtAttachment = $pdo->prepare($sqlAttachment);
 
-            $pdo->commit();
+                    $stmtAttachment->execute([
+                        ':change_request_id' => $id,
+                        ':file_name' => $fileName,
+                        ':file_path' => $relativePath,
+                        ':file_size' => $fileSize,
+                        ':file_type' => $extension,
+                        ':uploaded_by' => $userId
+                    ]);
 
-            header('Location: detail.php?id=' . $id);
-            exit;
+                    $sqlAttachmentLog = "
+                        INSERT INTO activity_logs (
+                            change_request_id,
+                            user_id,
+                            action,
+                            description
+                        )
+                        VALUES (
+                            :change_request_id,
+                            :user_id,
+                            :action,
+                            :description
+                        )
+                    ";
 
-        } catch (Throwable $e) {
+                    $stmtAttachmentLog = $pdo->prepare($sqlAttachmentLog);
 
-            if ($pdo->inTransaction()) {
-                $pdo->rollBack();
+                    $stmtAttachmentLog->execute([
+                        ':change_request_id' => $id,
+                        ':user_id' => $userId,
+                        ':action' => 'attachment_added',
+                        ':description' => 'Lampiran "' . $fileName . '" ditambahkan.'
+                    ]);
+                }
+
+                $pdo->commit();
+
+                header('Location: edit.php?id=' . $id);
+                exit;
+
+            } catch (Throwable $e) {
+
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
+
+                $errors[] = $e->getMessage();
             }
+        }
+    }
 
-            $errors[] = 'Gagal memperbarui CRF.';
+    /*
+    |--------------------------------------------------------------------------
+    | Update data CRF
+    |--------------------------------------------------------------------------
+    */
+
+    if ($action === 'update') {
+
+        $changeType = trim($_POST['change_type'] ?? '');
+        $category = trim($_POST['category'] ?? '');
+        $priority = trim($_POST['priority'] ?? '');
+        $title = trim($_POST['title'] ?? '');
+        $currentCondition = trim($_POST['current_condition'] ?? '');
+        $requestedChange = trim($_POST['requested_change'] ?? '');
+        $reason = trim($_POST['reason'] ?? '');
+
+        /*
+        |--------------------------------------------------------------------------
+        | Validasi
+        |--------------------------------------------------------------------------
+        */
+
+        if (!in_array($changeType, $changeTypes, true)) {
+            $errors[] = 'Tipe perubahan tidak valid.';
+        }
+
+        if (!in_array($category, $categories, true)) {
+            $errors[] = 'Kategori tidak valid.';
+        }
+
+        if (!in_array($priority, ['high', 'standard', 'low'], true)) {
+            $errors[] = 'Prioritas tidak valid.';
+        }
+
+        if ($title === '') {
+            $errors[] = 'Judul perubahan wajib diisi.';
+        }
+
+        if ($currentCondition === '') {
+            $errors[] = 'Kondisi saat ini wajib diisi.';
+        }
+
+        if ($requestedChange === '') {
+            $errors[] = 'Perubahan yang diminta wajib diisi.';
+        }
+
+        if ($reason === '') {
+            $errors[] = 'Alasan / tujuan wajib diisi.';
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Simpan perubahan
+        |--------------------------------------------------------------------------
+        */
+
+        if (empty($errors)) {
+
+            try {
+
+                $pdo->beginTransaction();
+
+                $sqlUpdate = "
+                    UPDATE change_requests
+                    SET
+                        change_type = :change_type,
+                        category = :category,
+                        priority = :priority,
+                        title = :title,
+                        current_condition = :current_condition,
+                        requested_change = :requested_change,
+                        reason = :reason
+                    WHERE id = :id
+                      AND user_id = :user_id
+                      AND status = 'draft'
+                ";
+
+                $stmtUpdate = $pdo->prepare($sqlUpdate);
+
+                $stmtUpdate->execute([
+                    ':change_type' => $changeType,
+                    ':category' => $category,
+                    ':priority' => $priority,
+                    ':title' => $title,
+                    ':current_condition' => $currentCondition,
+                    ':requested_change' => $requestedChange,
+                    ':reason' => $reason,
+                    ':id' => $id,
+                    ':user_id' => $userId
+                ]);
+
+                /*
+                |--------------------------------------------------------------------------
+                | Activity log
+                |--------------------------------------------------------------------------
+                */
+
+                $sqlLog = "
+                    INSERT INTO activity_logs (
+                        change_request_id,
+                        user_id,
+                        action,
+                        description
+                    )
+                    VALUES (
+                        :change_request_id,
+                        :user_id,
+                        :action,
+                        :description
+                    )
+                ";
+
+                $stmtLog = $pdo->prepare($sqlLog);
+
+                $stmtLog->execute([
+                    ':change_request_id' => $id,
+                    ':user_id' => $userId,
+                    ':action' => 'updated',
+                    ':description' => 'CRF draft diperbarui oleh requester.'
+                ]);
+
+                $pdo->commit();
+
+                header('Location: detail.php?id=' . $id);
+                exit;
+
+            } catch (Throwable $e) {
+
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
+
+                $errors[] = 'Gagal memperbarui CRF.';
+            }
         }
     }
 }
+
+/*
+|--------------------------------------------------------------------------
+| Ambil attachment
+|--------------------------------------------------------------------------
+*/
+
+$sqlAttachments = "
+    SELECT
+        id,
+        file_name,
+        file_path,
+        file_size,
+        file_type,
+        uploaded_at
+    FROM attachments
+    WHERE change_request_id = :change_request_id
+    ORDER BY uploaded_at DESC
+";
+
+$stmtAttachments = $pdo->prepare($sqlAttachments);
+
+$stmtAttachments->execute([
+    ':change_request_id' => $id
+]);
+
+$attachments = $stmtAttachments->fetchAll();
 
 $pageTitle = 'Edit CRF';
 $activeMenu = 'crf';
@@ -246,21 +442,21 @@ require_once __DIR__ . '/../../includes/sidebar.php';
             <strong>Terdapat kesalahan:</strong>
 
             <ul class="mb-0">
-
                 <?php foreach ($errors as $error): ?>
-
                     <li><?= htmlspecialchars($error) ?></li>
-
                 <?php endforeach; ?>
-
             </ul>
 
         </div>
 
     <?php endif; ?>
 
-    <form method="POST">
+    <form
+        method="POST"
+        enctype="multipart/form-data"
+    >
 
+        <!-- Informasi Pengajuan -->
         <div class="card mb-3">
 
             <div class="card-header bg-white">
@@ -294,7 +490,9 @@ require_once __DIR__ . '/../../includes/sidebar.php';
                     </div>
 
                     <div class="col-md-6">
-                        <label class="form-label">Requester / Pengaju</label>
+                        <label class="form-label">
+                            Requester / Pengaju
+                        </label>
 
                         <input
                             type="text"
@@ -351,7 +549,6 @@ require_once __DIR__ . '/../../includes/sidebar.php';
                                 </option>
 
                             <?php endforeach; ?>
-
                         </select>
                     </div>
 
@@ -380,7 +577,6 @@ require_once __DIR__ . '/../../includes/sidebar.php';
                                 </option>
 
                             <?php endforeach; ?>
-
                         </select>
                     </div>
 
@@ -419,7 +615,6 @@ require_once __DIR__ . '/../../includes/sidebar.php';
                             >
                                 Low
                             </option>
-
                         </select>
                     </div>
 
@@ -445,6 +640,7 @@ require_once __DIR__ . '/../../includes/sidebar.php';
 
         </div>
 
+        <!-- Detail Perubahan -->
         <div class="card mb-3">
 
             <div class="card-header bg-white">
@@ -454,7 +650,6 @@ require_once __DIR__ . '/../../includes/sidebar.php';
             <div class="card-body">
 
                 <div class="mb-3">
-
                     <label for="current_condition" class="form-label">
                         Kondisi Saat Ini
                     </label>
@@ -466,11 +661,9 @@ require_once __DIR__ . '/../../includes/sidebar.php';
                         rows="5"
                         required
                     ><?= htmlspecialchars($_POST['current_condition'] ?? $crf['current_condition']) ?></textarea>
-
                 </div>
 
                 <div class="mb-3">
-
                     <label for="requested_change" class="form-label">
                         Perubahan yang Diminta
                     </label>
@@ -482,11 +675,9 @@ require_once __DIR__ . '/../../includes/sidebar.php';
                         rows="5"
                         required
                     ><?= htmlspecialchars($_POST['requested_change'] ?? $crf['requested_change']) ?></textarea>
-
                 </div>
 
                 <div>
-
                     <label for="reason" class="form-label">
                         Alasan / Tujuan
                     </label>
@@ -498,6 +689,131 @@ require_once __DIR__ . '/../../includes/sidebar.php';
                         rows="5"
                         required
                     ><?= htmlspecialchars($_POST['reason'] ?? $crf['reason']) ?></textarea>
+                </div>
+
+            </div>
+
+        </div>
+
+        <!-- Lampiran -->
+        <div class="card mb-3">
+
+            <div class="card-header bg-white">
+                <strong>3. Lampiran</strong>
+            </div>
+
+            <div class="card-body">
+
+                <?php if (!empty($attachments)): ?>
+
+                    <div class="table-responsive mb-3">
+
+                        <table class="table table-hover align-middle mb-0">
+
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Nama File</th>
+                                    <th>Tipe</th>
+                                    <th>Ukuran</th>
+                                    <th>Tanggal Upload</th>
+                                    <th>Aksi</th>
+                                </tr>
+                            </thead>
+
+                            <tbody>
+
+                                <?php foreach ($attachments as $attachment): ?>
+
+                                    <tr>
+
+                                        <td>
+                                            <?= htmlspecialchars($attachment['file_name']) ?>
+                                        </td>
+
+                                        <td>
+                                            <?= htmlspecialchars(
+                                                strtoupper($attachment['file_type'])
+                                            ) ?>
+                                        </td>
+
+                                        <td>
+                                            <?= number_format(
+                                                $attachment['file_size'] / 1024,
+                                                2
+                                            ) ?> KB
+                                        </td>
+
+                                        <td>
+                                            <?= htmlspecialchars(
+                                                date(
+                                                    'd M Y H:i',
+                                                    strtotime($attachment['uploaded_at'])
+                                                )
+                                            ) ?>
+                                        </td>
+
+                                        <td>
+                                            <a
+                                                href="../../<?= htmlspecialchars($attachment['file_path']) ?>"
+                                                target="_blank"
+                                                class="btn btn-sm btn-outline-primary"
+                                            >
+                                                <i class="bi bi-eye"></i>
+                                                Lihat
+                                            </a>
+                                        </td>
+
+                                    </tr>
+
+                                <?php endforeach; ?>
+
+                            </tbody>
+
+                        </table>
+
+                    </div>
+
+                <?php else: ?>
+
+                    <p class="text-muted">
+                        Belum ada lampiran.
+                    </p>
+
+                <?php endif; ?>
+
+                <div class="border rounded p-3">
+
+                    <label
+                        for="attachments"
+                        class="form-label"
+                    >
+                        Tambah Lampiran
+                    </label>
+
+                    <input
+                        type="file"
+                        name="attachments[]"
+                        id="attachments"
+                        class="form-control"
+                        multiple
+                        accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.png"
+                    >
+
+                    <div class="form-text">
+                        Format:
+                        PDF, DOC, DOCX, XLS, XLSX, JPG, PNG.
+                        Maksimal 5 MB per file.
+                    </div>
+
+                    <button
+                        type="submit"
+                        name="action"
+                        value="upload_attachment"
+                        class="btn btn-primary mt-3"
+                    >
+                        <i class="bi bi-upload"></i>
+                        Upload Lampiran
+                    </button>
 
                 </div>
 
@@ -505,9 +821,15 @@ require_once __DIR__ . '/../../includes/sidebar.php';
 
         </div>
 
+        <!-- Aksi -->
         <div class="d-flex gap-2">
 
-            <button type="submit" class="btn btn-primary">
+            <button
+                type="submit"
+                name="action"
+                value="update"
+                class="btn btn-primary"
+            >
                 <i class="bi bi-save"></i>
                 Simpan Perubahan
             </button>
